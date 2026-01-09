@@ -122,30 +122,34 @@ class GLMEmbeddings(Embeddings):
         self.model = model
         self.timeout = timeout
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
     def _call_api(self, texts: List[str]) -> List[List[float]]:
-        """Make embedding API call."""
+        """Make embedding API call - process one at a time for Zhipu API."""
         url = f"{self.base_url.rstrip('/')}/embeddings"
         headers = {
             "Authorization": f"Bearer {self.api_key.get_secret_value()}",
             "Content-Type": "application/json",
         }
-        payload = {
-            "model": self.model,
-            "input": texts,
-        }
 
-        with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        all_embeddings = []
+        for text in texts:
+            payload = {
+                "model": self.model,
+                "input": text,  # Single string, not list
+            }
 
-        # Sort by index to ensure correct order
-        embeddings = sorted(data["data"], key=lambda x: x["index"])
-        return [item["embedding"] for item in embeddings]
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    response = client.post(url, headers=headers, json=payload)
+                    if response.status_code != 200:
+                        print(f"Embedding API error: {response.status_code} - {response.text[:200]}")
+                        raise Exception(f"Embedding API error: {response.status_code}")
+                    data = response.json()
+                    all_embeddings.append(data["data"][0]["embedding"])
+            except Exception as e:
+                print(f"Embedding error for text: {text[:50]}... - {e}")
+                raise
+
+        return all_embeddings
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Embed a list of documents."""
