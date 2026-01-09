@@ -109,19 +109,18 @@ class GLMChat(BaseChatModel):
 class GLMEmbeddings(Embeddings):
     """LangChain compatible embeddings for Zhipu AI."""
 
-    api_key: SecretStr = Field(..., description="Zhipu AI API key")
-    base_url: str = Field(
-        default="https://open.bigmodel.cn/api/paas/v4/",
-        description="API base URL"
-    )
-    model: str = Field(default="embedding-3", description="Embedding model name")
-    timeout: int = Field(default=60)
-
-    def __init__(self, **kwargs):
-        # Pydantic v2 style initialization
-        super().__init__(**kwargs)
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+    def __init__(
+        self,
+        api_key: SecretStr,
+        base_url: str = "https://open.bigmodel.cn/api/paas/v4/",
+        model: str = "embedding-3",
+        timeout: int = 60,
+        **kwargs
+    ):
+        self.api_key = api_key
+        self.base_url = base_url
+        self.model = model
+        self.timeout = timeout
 
     @retry(
         stop=stop_after_attempt(3),
