@@ -127,16 +127,20 @@ class SECDownloader:
                     return results
 
         # Fuzzy match on name and ticker
-        search_texts = [(c["search_text"], i) for i, c in enumerate(companies)]
+        search_texts = {c["search_text"]: i for i, c in enumerate(companies)}
         matches = process.extract(
             query,
-            [s[0] for s in search_texts],
+            list(search_texts.keys()),
             scorer=fuzz.token_set_ratio,
             limit=limit * 2
         )
 
-        for match_text, score, idx in matches:
+        for match in matches:
+            match_text, score = match[0], match[1]
             if score < 50:
+                continue
+            idx = search_texts.get(match_text)
+            if idx is None:
                 continue
             c = companies[idx]
             info = CompanyInfo(
