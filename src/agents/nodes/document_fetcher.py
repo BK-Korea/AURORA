@@ -65,10 +65,10 @@ class DocumentFetcherNode:
 
         self._report_progress(f"Downloading SEC filings for {company_info.name}...")
 
-        # Download filings
+        # Download filings (including foreign company forms: 20-F, 6-K)
         filings = self.downloader.download_filings(
             cik=company_info.cik,
-            form_types=["10-K", "10-Q", "8-K"],
+            form_types=["10-K", "10-Q", "8-K", "20-F", "6-K"],
             years=years,
             progress_callback=self._report_progress
         )

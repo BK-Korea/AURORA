@@ -1,6 +1,7 @@
 """GLM-4.7 LangChain compatible client for Zhipu AI."""
 from typing import Any, List, Optional, Iterator
 import httpx
+import logging
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.embeddings import Embeddings
 from langchain_core.messages import (
@@ -13,7 +14,24 @@ from langchain_core.messages import (
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from pydantic import Field, SecretStr
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+
+logger = logging.getLogger(__name__)
+
+# Maximum characters for embedding input (Zhipu API has ~8192 token limit)
+MAX_EMBEDDING_CHARS = 6000
+
+
+def _is_retryable_error(exception: BaseException) -> bool:
+    """Check if the exception is retryable (not 400 Bad Request or ValueError)."""
+    # Don't retry ValueErrors (typically validation or API format errors)
+    if isinstance(exception, ValueError):
+        return False
+    if isinstance(exception, httpx.HTTPStatusError):
+        # Don't retry client errors (4xx) except 429 (rate limit)
+        if 400 <= exception.response.status_code < 500:
+            return exception.response.status_code == 429
+    return True
 
 
 class GLMChat(BaseChatModel):
@@ -26,8 +44,8 @@ class GLMChat(BaseChatModel):
     )
     model: str = Field(default="glm-4.7", description="Model name")
     temperature: float = Field(default=0.7, ge=0.0, le=1.0)
-    max_tokens: Optional[int] = Field(default=4096)
-    timeout: int = Field(default=60)
+    max_tokens: Optional[int] = Field(default=8192)  # Doubled for detailed reports
+    timeout: int = Field(default=600)  # 10 minutes for complex analysis
 
     @property
     def _llm_type(self) -> str:
@@ -113,7 +131,7 @@ class GLMEmbeddings(Embeddings):
         self,
         api_key: SecretStr,
         base_url: str = "https://open.bigmodel.cn/api/paas/v4/",
-        model: str = "embedding-3",
+        model: str = "embedding-2",
         timeout: int = 60,
         **kwargs
     ):
@@ -124,10 +142,21 @@ class GLMEmbeddings(Embeddings):
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception(_is_retryable_error)
     )
     def _embed_single(self, text: str, url: str, headers: dict) -> List[float]:
         """Embed a single text with retry logic."""
+        # Truncate text if too long to avoid API errors
+        if len(text) > MAX_EMBEDDING_CHARS:
+            logger.warning(f"Truncating text from {len(text)} to {MAX_EMBEDDING_CHARS} chars")
+            text = text[:MAX_EMBEDDING_CHARS]
+        
+        # Skip empty or whitespace-only text
+        if not text or not text.strip():
+            logger.warning("Empty text provided for embedding, using placeholder")
+            text = "[empty]"
+        
         payload = {
             "model": self.model,
             "input": text,  # Single string for Zhipu API
@@ -137,6 +166,12 @@ class GLMEmbeddings(Embeddings):
             response = client.post(url, headers=headers, json=payload)
             if response.status_code == 401:
                 raise ValueError("Authentication failed - check your API key")
+            if response.status_code == 400:
+                # Log the error details for debugging
+                error_detail = response.text
+                logger.error(f"API 400 error: {error_detail}")
+                logger.error(f"Text length: {len(text)}, first 100 chars: {text[:100]}")
+                raise ValueError(f"Bad request to embedding API: {error_detail}")
             response.raise_for_status()
             data = response.json()
             return data["data"][0]["embedding"]
@@ -160,6 +195,84 @@ class GLMEmbeddings(Embeddings):
         """Embed a list of documents."""
         # Process in batches to avoid API limits
         batch_size = 16
+        all_embeddings = []
+
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            embeddings = self._call_api(batch)
+            all_embeddings.extend(embeddings)
+
+        return all_embeddings
+
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a single query."""
+        return self._call_api([text])[0]
+
+
+class OpenAIEmbeddings(Embeddings):
+    """LangChain compatible embeddings for OpenAI."""
+
+    def __init__(
+        self,
+        api_key: SecretStr,
+        model: str = "text-embedding-3-small",
+        timeout: int = 60,
+        **kwargs
+    ):
+        self.api_key = api_key
+        self.model = model
+        self.timeout = timeout
+        self.base_url = "https://api.openai.com/v1"
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception(_is_retryable_error)
+    )
+    def _call_api(self, texts: List[str]) -> List[List[float]]:
+        """Make embedding API call to OpenAI."""
+        url = f"{self.base_url}/embeddings"
+        headers = {
+            "Authorization": f"Bearer {self.api_key.get_secret_value()}",
+            "Content-Type": "application/json",
+        }
+        
+        # Preprocess texts
+        processed_texts = []
+        for text in texts:
+            # Truncate if too long (OpenAI has 8191 token limit)
+            if len(text) > MAX_EMBEDDING_CHARS:
+                logger.warning(f"Truncating text from {len(text)} to {MAX_EMBEDDING_CHARS} chars")
+                text = text[:MAX_EMBEDDING_CHARS]
+            # Handle empty text
+            if not text or not text.strip():
+                text = "[empty]"
+            processed_texts.append(text)
+        
+        payload = {
+            "model": self.model,
+            "input": processed_texts,
+        }
+
+        with httpx.Client(timeout=self.timeout) as client:
+            response = client.post(url, headers=headers, json=payload)
+            if response.status_code == 401:
+                raise ValueError("Authentication failed - check your OpenAI API key")
+            if response.status_code == 400:
+                error_detail = response.text
+                logger.error(f"OpenAI API 400 error: {error_detail}")
+                raise ValueError(f"Bad request to OpenAI embedding API: {error_detail}")
+            response.raise_for_status()
+            data = response.json()
+            
+            # Sort by index to maintain order
+            embeddings = sorted(data["data"], key=lambda x: x["index"])
+            return [item["embedding"] for item in embeddings]
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed a list of documents."""
+        # OpenAI supports batch requests, process in chunks of 2048
+        batch_size = 100  # Safe batch size
         all_embeddings = []
 
         for i in range(0, len(texts), batch_size):

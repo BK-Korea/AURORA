@@ -8,16 +8,20 @@ from pydantic import Field
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # API Configuration
+    # API Configuration - GLM (Zhipu AI)
     glm_api_key: str = Field(..., env="GLM_API_KEY")
     glm_base_url: str = Field(
         default="https://open.bigmodel.cn/api/paas/v4/",
         env="GLM_BASE_URL"
     )
+    
+    # API Configuration - OpenAI
+    openai_api_key: str = Field(default="", env="OPENAI_API_KEY")
 
     # Model Configuration
     chat_model: str = Field(default="glm-4.7", env="CHAT_MODEL")
-    embedding_model: str = Field(default="embedding-3", env="EMBEDDING_MODEL")
+    embedding_model: str = Field(default="text-embedding-3-small", env="EMBEDDING_MODEL")
+    embedding_provider: str = Field(default="openai", env="EMBEDDING_PROVIDER")  # "openai" or "glm"
 
     # Paths
     base_dir: Path = Path(__file__).parent.parent

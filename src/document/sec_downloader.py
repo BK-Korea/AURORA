@@ -39,7 +39,9 @@ class SECDownloader:
     EDGAR_FULL_TEXT_SEARCH = "https://efts.sec.gov/LATEST/search-index"
     COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 
-    SUPPORTED_FORMS = ["10-K", "10-Q", "8-K", "DEF 14A"]
+    # US companies: 10-K, 10-Q, 8-K
+    # Foreign companies: 20-F (annual), 6-K (current)
+    SUPPORTED_FORMS = ["10-K", "10-Q", "8-K", "DEF 14A", "20-F", "6-K"]
 
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir

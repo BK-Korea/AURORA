@@ -78,6 +78,15 @@ def create_agent() -> AuroraAgent:
         console.print("[dim]Get your key at: https://open.bigmodel.cn/[/dim]")
         raise typer.Exit(1)
 
+    # OpenAI API key for embeddings (optional but recommended)
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    embedding_provider = "openai" if openai_api_key else "glm"
+    
+    if openai_api_key:
+        console.print("[dim]Using OpenAI for embeddings[/dim]")
+    else:
+        console.print("[dim]Using GLM for embeddings (set OPENAI_API_KEY for better results)[/dim]")
+
     base_url = os.getenv("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/")
     data_dir = Path(__file__).parent.parent / "data"
 
@@ -88,7 +97,9 @@ def create_agent() -> AuroraAgent:
         api_key=api_key,
         base_url=base_url,
         data_dir=data_dir,
-        progress_callback=progress_callback
+        progress_callback=progress_callback,
+        openai_api_key=openai_api_key,
+        embedding_provider=embedding_provider,
     )
 
 
@@ -237,17 +248,27 @@ def ask(
 
     console.print(f"[dim]Using {stats['total_chunks']} indexed chunks[/dim]\n")
 
-    with console.status("[bold cyan]Analyzing...[/bold cyan]"):
-        result = agent.ask(question)
+    # Don't use status spinner - let progress messages show
+    result = agent.ask(question)
+
+    # Check for errors
+    if result.get("error"):
+        console.print(f"[red]Error: {result['error']}[/red]")
+        raise typer.Exit(1)
 
     answer = result.get("current_answer", "")
+    score = result.get("answer_score", 0)
+    
     if answer:
+        console.print()
         console.print(Panel(
             Markdown(answer),
-            title="[bold green]Answer[/bold green]",
+            title=f"[bold green]Answer[/bold green] [dim](Quality: {score}/10)[/dim]",
             border_style="green",
             padding=(1, 2)
         ))
+    else:
+        console.print("[yellow]No answer generated. Please try a different question.[/yellow]")
 
 
 @app.command()

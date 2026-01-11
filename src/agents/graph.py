@@ -17,7 +17,7 @@ from ..document.sec_downloader import SECDownloader
 from ..document.parser import DocumentParser
 from ..document.chunker import DocumentChunker
 from ..vectorstore.chroma_store import ChromaStore
-from ..llm.glm_client import GLMChat, GLMEmbeddings
+from ..llm.glm_client import GLMChat, GLMEmbeddings, OpenAIEmbeddings
 
 
 class AuroraAgent:
@@ -37,12 +37,16 @@ class AuroraAgent:
         api_key: str,
         base_url: str = "https://open.bigmodel.cn/api/paas/v4/",
         data_dir: Path = None,
-        progress_callback: Optional[Callable[[str], None]] = None
+        progress_callback: Optional[Callable[[str], None]] = None,
+        openai_api_key: Optional[str] = None,
+        embedding_provider: str = "openai",
     ):
         self.api_key = api_key
         self.base_url = base_url
         self.data_dir = data_dir or Path("data")
         self.progress_callback = progress_callback
+        self.openai_api_key = openai_api_key
+        self.embedding_provider = embedding_provider
 
         # Initialize components
         self._init_components()
@@ -58,14 +62,21 @@ class AuroraAgent:
             base_url=self.base_url,
             model="glm-4.7",
             temperature=0.1,  # Low for factual accuracy
+            timeout=180,  # Increased for detailed answers
         )
 
-        # Embeddings
-        self.embeddings = GLMEmbeddings(
-            api_key=SecretStr(self.api_key),
-            base_url=self.base_url,
-            model="embedding-3",
-        )
+        # Embeddings - use OpenAI by default (more reliable)
+        if self.embedding_provider == "openai" and self.openai_api_key:
+            self.embeddings = OpenAIEmbeddings(
+                api_key=SecretStr(self.openai_api_key),
+                model="text-embedding-3-small",
+            )
+        else:
+            self.embeddings = GLMEmbeddings(
+                api_key=SecretStr(self.api_key),
+                base_url=self.base_url,
+                model="embedding-2",
+            )
 
         # Document processing
         self.downloader = SECDownloader(data_dir=self.data_dir)
@@ -96,12 +107,16 @@ class AuroraAgent:
         )
         self.retriever = RetrieverNode(
             vector_store=self.vector_store,
-            top_k=10,
-            min_score=0.3
+            top_k=20,  # Increased for comprehensive answers
+            min_score=0.2,  # Lower threshold for more results
+            llm=self.llm  # For query optimization
         )
         self.answerer = AnswererNode(
             llm=self.llm,
-            max_context_tokens=8000
+            max_context_tokens=16000,
+            target_score=8,  # CEO-level quality
+            max_iterations=2,  # Refine up to 2 times
+            progress_callback=self.progress_callback
         )
         self.citation_validator = CitationValidatorNode(strict=False)
 
@@ -215,16 +230,19 @@ class AuroraAgent:
         state["current_query"] = question
         state["documents_processed"] = True
 
-        # Run through Q&A nodes manually
-        state = self.retriever(state)
+        # Run through Q&A nodes manually (update state, don't replace)
+        retriever_result = self.retriever(state)
+        state.update(retriever_result)
         if state.get("error"):
             return state
 
-        state = self.answerer(state)
+        answerer_result = self.answerer(state)
+        state.update(answerer_result)
         if state.get("error"):
             return state
 
-        state = self.citation_validator(state)
+        validator_result = self.citation_validator(state)
+        state.update(validator_result)
         return state
 
     def get_stats(self) -> Dict[str, Any]:
