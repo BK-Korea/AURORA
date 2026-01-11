@@ -71,6 +71,13 @@ def create_agent() -> AuroraAgent:
         console.print("[dim]Please set your API key in .env file[/dim]")
         raise typer.Exit(1)
 
+    # Check for placeholder values
+    if api_key in ["your_api_key_here", "your-api-key-here", "YOUR_API_KEY_HERE"]:
+        console.print("[red]Error: GLM_API_KEY contains a placeholder value.[/red]")
+        console.print("[dim]Please update .env file with your actual Zhipu AI API key[/dim]")
+        console.print("[dim]Get your key at: https://open.bigmodel.cn/[/dim]")
+        raise typer.Exit(1)
+
     base_url = os.getenv("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/")
     data_dir = Path(__file__).parent.parent / "data"
 

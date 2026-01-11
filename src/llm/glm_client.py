@@ -122,8 +122,27 @@ class GLMEmbeddings(Embeddings):
         self.model = model
         self.timeout = timeout
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10)
+    )
+    def _embed_single(self, text: str, url: str, headers: dict) -> List[float]:
+        """Embed a single text with retry logic."""
+        payload = {
+            "model": self.model,
+            "input": text,  # Single string for Zhipu API
+        }
+
+        with httpx.Client(timeout=self.timeout) as client:
+            response = client.post(url, headers=headers, json=payload)
+            if response.status_code == 401:
+                raise ValueError("Authentication failed - check your API key")
+            response.raise_for_status()
+            data = response.json()
+            return data["data"][0]["embedding"]
+
     def _call_api(self, texts: List[str]) -> List[List[float]]:
-        """Make embedding API call - process one at a time for Zhipu API."""
+        """Make embedding API calls - process one at a time for Zhipu API."""
         url = f"{self.base_url.rstrip('/')}/embeddings"
         headers = {
             "Authorization": f"Bearer {self.api_key.get_secret_value()}",
@@ -132,22 +151,8 @@ class GLMEmbeddings(Embeddings):
 
         all_embeddings = []
         for text in texts:
-            payload = {
-                "model": self.model,
-                "input": text,  # Single string, not list
-            }
-
-            try:
-                with httpx.Client(timeout=self.timeout) as client:
-                    response = client.post(url, headers=headers, json=payload)
-                    if response.status_code != 200:
-                        print(f"Embedding API error: {response.status_code} - {response.text[:200]}")
-                        raise Exception(f"Embedding API error: {response.status_code}")
-                    data = response.json()
-                    all_embeddings.append(data["data"][0]["embedding"])
-            except Exception as e:
-                print(f"Embedding error for text: {text[:50]}... - {e}")
-                raise
+            embedding = self._embed_single(text, url, headers)
+            all_embeddings.append(embedding)
 
         return all_embeddings
 
