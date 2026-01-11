@@ -185,4 +185,4 @@ aurora clear
 
 ## 📜 License
 
-MIT License
+POWERED BY ELCHEMIST
