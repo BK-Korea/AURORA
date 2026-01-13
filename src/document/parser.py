@@ -26,6 +26,7 @@ class ParsedDocument:
     company_name: str
     sections: List[DocumentSection]
     raw_text: str
+    ticker: Optional[str] = None  # Company ticker symbol
 
     @property
     def total_pages(self) -> int:

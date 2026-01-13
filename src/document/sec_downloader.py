@@ -331,3 +331,48 @@ class SECDownloader:
                 ))
 
         return sorted(filings, key=lambda x: x.filing_date, reverse=True)
+
+    def check_filing_exists(self, cik: str, form_type: str, filing_date: str, accession_number: str) -> bool:
+        """
+        Check if a specific SEC filing already exists in AURORA's data directory.
+        
+        This is useful for NOVA to avoid downloading duplicate filings.
+        
+        Args:
+            cik: Company CIK number
+            form_type: Form type (e.g., "10-K", "10-Q")
+            filing_date: Filing date (YYYY-MM-DD format)
+            accession_number: SEC accession number
+            
+        Returns:
+            True if filing exists, False otherwise
+        """
+        company_dir = self.raw_dir / cik.lstrip("0")
+        if not company_dir.exists():
+            return False
+        
+        # Construct expected filename
+        form_clean = form_type.replace(" ", "_")
+        expected_filename = f"{form_clean}_{filing_date}_{accession_number}.html"
+        expected_path = company_dir / expected_filename
+        
+        return expected_path.exists()
+
+    def get_existing_filings_set(self, cik: str) -> set:
+        """
+        Get a set of existing filing identifiers for quick lookup.
+        
+        Returns a set of tuples: (form_type, filing_date, accession_number)
+        This is useful for NOVA to quickly check if a filing exists.
+        
+        Args:
+            cik: Company CIK number
+            
+        Returns:
+            Set of tuples (form_type, filing_date, accession_number)
+        """
+        existing_filings = self.get_downloaded_filings(cik)
+        return {
+            (f.form_type, f.filing_date, f.accession_number)
+            for f in existing_filings
+        }

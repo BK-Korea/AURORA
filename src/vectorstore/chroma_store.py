@@ -117,6 +117,8 @@ class ChromaStore:
         top_k: int = 10,
         filter_form_types: Optional[List[str]] = None,
         filter_sections: Optional[List[str]] = None,
+        filter_company_name: Optional[str] = None,
+        filter_min_date: Optional[str] = None,
         min_score: float = 0.0
     ) -> List[RetrievedChunk]:
         """
@@ -127,6 +129,8 @@ class ChromaStore:
             top_k: Number of results to return
             filter_form_types: Optional list of form types to filter
             filter_sections: Optional list of sections to filter
+            filter_company_name: Optional company name to filter (exact match)
+            filter_min_date: Optional minimum filing date (YYYY-MM-DD format)
             min_score: Minimum similarity score
 
         Returns:
@@ -134,17 +138,21 @@ class ChromaStore:
         """
         # Build where clause for filtering
         where = None
-        if filter_form_types or filter_sections:
-            conditions = []
-            if filter_form_types:
-                conditions.append({"form_type": {"$in": filter_form_types}})
-            if filter_sections:
-                conditions.append({"section_name": {"$in": filter_sections}})
+        conditions = []
+        if filter_form_types:
+            conditions.append({"form_type": {"$in": filter_form_types}})
+        if filter_sections:
+            conditions.append({"section_name": {"$in": filter_sections}})
+        if filter_company_name:
+            conditions.append({"company_name": filter_company_name})
+        if filter_min_date:
+            # Filter by filing_date >= filter_min_date
+            conditions.append({"filing_date": {"$gte": filter_min_date}})
 
-            if len(conditions) == 1:
-                where = conditions[0]
-            else:
-                where = {"$and": conditions}
+        if len(conditions) == 1:
+            where = conditions[0]
+        elif len(conditions) > 1:
+            where = {"$and": conditions}
 
         # Generate query embedding
         query_embedding = self.embeddings.embed_query(query)
@@ -180,11 +188,32 @@ class ChromaStore:
     def get_collection_stats(self) -> Dict[str, Any]:
         """Get statistics about the collection."""
         count = self.collection.count()
+        
+        # Get unique company names and tickers
+        all_data = self.collection.get(include=["metadatas"])
+        company_names = set()
+        company_tickers = {}  # company_name -> ticker mapping
+        filing_dates = []
+        if all_data.get("metadatas"):
+            for meta in all_data["metadatas"]:
+                if meta and "company_name" in meta:
+                    company_name = meta["company_name"]
+                    company_names.add(company_name)
+                    # Store ticker if available
+                    if "company_ticker" in meta and meta["company_ticker"]:
+                        if company_name not in company_tickers:
+                            company_tickers[company_name] = meta["company_ticker"]
+                if meta and "filing_date" in meta:
+                    filing_dates.append(meta["filing_date"])
 
         return {
             "total_chunks": count,
             "collection_name": self.collection_name,
-            "persist_dir": str(self.persist_dir)
+            "persist_dir": str(self.persist_dir),
+            "indexed_companies": list(company_names),
+            "indexed_tickers": company_tickers,  # company_name -> ticker mapping
+            "latest_filing_date": max(filing_dates) if filing_dates else None,
+            "earliest_filing_date": min(filing_dates) if filing_dates else None
         }
 
     def clear_collection(self) -> None:

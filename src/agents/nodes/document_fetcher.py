@@ -92,14 +92,18 @@ class DocumentFetcherNode:
                     form_type=filing.form_type,
                     filing_date=filing.filing_date
                 )
+                # Add ticker information to parsed document if available
+                if company_info.ticker:
+                    # Store ticker in a way that chunker can access
+                    parsed.ticker = company_info.ticker
                 parsed_docs.append(parsed)
             except Exception as e:
                 self._report_progress(f"Warning: Failed to parse {filing.file_path}: {e}")
 
         self._report_progress(f"Parsed {len(parsed_docs)} documents. Chunking...")
 
-        # Chunk documents
-        all_chunks = self.chunker.chunk_documents(parsed_docs)
+        # Chunk documents with company info (including ticker)
+        all_chunks = self.chunker.chunk_documents(parsed_docs, company_ticker=company_info.ticker)
 
         self._report_progress(f"Created {len(all_chunks)} chunks. Indexing...")
 

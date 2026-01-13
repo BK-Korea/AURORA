@@ -50,12 +50,13 @@ class DocumentChunker:
             separators=["\n\n", "\n", ". ", " ", ""]
         )
 
-    def chunk_document(self, doc: ParsedDocument) -> List[DocumentChunk]:
+    def chunk_document(self, doc: ParsedDocument, company_ticker: Optional[str] = None) -> List[DocumentChunk]:
         """
         Chunk a parsed document into retrieval-ready chunks.
 
         Args:
             doc: ParsedDocument to chunk
+            company_ticker: Optional ticker symbol to include in metadata
 
         Returns:
             List of DocumentChunk with full metadata
@@ -67,6 +68,11 @@ class DocumentChunker:
             "filing_date": doc.filing_date,
             "company_name": doc.company_name,
         }
+        
+        # Add ticker if available (from doc or parameter)
+        ticker = doc.ticker if hasattr(doc, 'ticker') and doc.ticker else company_ticker
+        if ticker:
+            base_metadata["company_ticker"] = ticker
 
         for section in doc.sections:
             section_metadata = {
@@ -143,10 +149,10 @@ class DocumentChunker:
 
         return chunks
 
-    def chunk_documents(self, docs: List[ParsedDocument]) -> List[DocumentChunk]:
+    def chunk_documents(self, docs: List[ParsedDocument], company_ticker: Optional[str] = None) -> List[DocumentChunk]:
         """Chunk multiple documents."""
         all_chunks = []
         for doc in docs:
-            chunks = self.chunk_document(doc)
+            chunks = self.chunk_document(doc, company_ticker=company_ticker)
             all_chunks.extend(chunks)
         return all_chunks

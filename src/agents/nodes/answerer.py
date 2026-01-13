@@ -81,12 +81,66 @@ class AnswererNode:
         )
 
         try:
+            # Verify all chunks are from the same company (if company_info is in state)
+            company_info = state.get("company_info")
+            if company_info:
+                chunk_companies = set()
+                for chunk in chunks:
+                    chunk_company = chunk.metadata.get("company_name")
+                    if chunk_company:
+                        chunk_companies.add(chunk_company)
+                
+                # Check if all chunks match the expected company
+                if chunk_companies and company_info.name not in chunk_companies:
+                    # Fuzzy match check
+                    from thefuzz import fuzz
+                    best_match = None
+                    best_score = 0
+                    for chunk_company in chunk_companies:
+                        score = fuzz.partial_ratio(
+                            company_info.name.lower(),
+                            chunk_company.lower()
+                        )
+                        if score > best_score:
+                            best_score = score
+                            best_match = chunk_company
+                    
+                    if best_score < 70:  # Low match threshold
+                        return {
+                            "current_answer": "",
+                            "answer_score": 0,
+                            "error": (
+                                f"질문한 회사 '{company_info.name}'와 인덱스된 문서의 회사가 일치하지 않습니다. "
+                                f"인덱스된 문서: {', '.join(list(chunk_companies)[:3])}"
+                            )
+                        }
+
             # Use iterative answerer for high-quality output
             answer, score, iterations = self.iterative_answerer.generate(
                 question=query,
                 context=context,
                 progress_callback=self.progress_callback
             )
+
+            # Final verification: Check if answer mentions the correct company
+            if company_info:
+                answer_lower = answer.lower()
+                company_name_lower = company_info.name.lower()
+                ticker_lower = (company_info.ticker or "").lower()
+                
+                # Check if answer mentions the company
+                mentions_company = (
+                    company_name_lower in answer_lower or
+                    ticker_lower in answer_lower or
+                    any(word in answer_lower for word in company_name_lower.split() if len(word) > 3)
+                )
+                
+                # If answer doesn't mention the company at all, add a warning
+                if not mentions_company and len(answer) > 200:
+                    # This might indicate the answer is about a different company
+                    logger.warning(
+                        f"Answer doesn't mention company {company_info.name} but company was specified in query"
+                    )
 
             return {
                 "current_answer": answer,

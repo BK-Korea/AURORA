@@ -246,7 +246,13 @@ def ask(
         console.print("[yellow]No documents indexed. Run 'aurora research <company>' first.[/yellow]")
         raise typer.Exit(1)
 
-    console.print(f"[dim]Using {stats['total_chunks']} indexed chunks[/dim]\n")
+    console.print(f"[dim]Using {stats['total_chunks']} indexed chunks[/dim]")
+    
+    # Show indexed companies if available
+    indexed_companies = stats.get("indexed_companies", [])
+    if indexed_companies:
+        console.print(f"[dim]Indexed companies: {', '.join(indexed_companies[:3])}[/dim]")
+    console.print()
 
     # Don't use status spinner - let progress messages show
     result = agent.ask(question)
@@ -254,7 +260,18 @@ def ask(
     # Check for errors
     if result.get("error"):
         console.print(f"[red]Error: {result['error']}[/red]")
+        
+        # Show matched company info if available
+        matched_company = result.get("matched_company")
+        if matched_company:
+            console.print(f"\n[dim]Matched company: {matched_company.name} ({matched_company.ticker})[/dim]")
+        
         raise typer.Exit(1)
+    
+    # Show matched company info if available
+    matched_company = result.get("matched_company")
+    if matched_company:
+        console.print(f"[dim green]✓ Using company: {matched_company.name} ({matched_company.ticker})[/dim green]\n")
 
     answer = result.get("current_answer", "")
     score = result.get("answer_score", 0)

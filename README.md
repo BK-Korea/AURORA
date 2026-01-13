@@ -29,6 +29,9 @@ AI-powered SEC document analysis with **CEO-level quality reports** and strict c
 - **Citation Verification**: Every claim is traced to source documents with page numbers
 - **Direct English Quotes**: Key findings include original English text from SEC filings
 - **No Hallucination**: Strict RAG with source-only responses
+- **Intelligent Query Interpretation**: Handles various linguistic forms (e.g., "archer"/"아쳐", "8-k"/"팔케이") using LangChain-based normalization
+- **Smart Filtering**: Filter by company, form type (10-K, 10-Q, 8-K, etc.), and date range
+- **Performance Optimized**: Reduced LLM API calls through unified query interpretation and fuzzy matching
 
 ## 🚀 Installation
 
@@ -91,7 +94,24 @@ aurora ask "What are the main risk factors?"
 
 # Detailed financial analysis
 aurora ask "주요 비용의 년간 변화추이를 분석해줘"
+
+# Filter by form type (supports various formats)
+aurora ask "archer의 8-k에서 중요 내용 정리해줘"
+aurora ask "아쳐의 팔케이 중 기업조사보고서에 포함되어야할 중요내용들을 뽑아서 정리해줘"
+
+# Filter by date
+aurora ask "최신 정보들에 대해서 브리핑 해줘. 지금은 26년 1월이야"
+
+# Combined filters
+aurora ask "Apple의 10-K 최신 재무상태를 분석해줘"
 ```
+
+**Query Interpretation Features:**
+- **Multi-language Support**: Handles Korean, English, and mixed inputs
+- **Form Type Normalization**: Automatically converts "8-k", "팔케이", "팔 케 이" → "8-K"
+- **Company Name Variations**: Matches "archer", "아쳐", "아 처" → "Archer"
+- **Ticker Symbol Support**: Recognizes both company names and ticker symbols (e.g., "AAPL", "ACHR")
+- **Date Filtering**: Understands relative dates ("최신", "26년 1월") and converts to date filters
 
 ### Other Commands
 
@@ -182,6 +202,19 @@ aurora clear
 | 8-K | Current Report | US Domestic |
 | 20-F | Annual Report | Foreign Private Issuers |
 | 6-K | Current Report | Foreign Private Issuers |
+
+## 🔗 Integration
+
+### NOVA Integration
+
+AURORA provides utilities for external tools (like NOVA) to check for already downloaded filings, preventing redundant data collection.
+
+See [NOVA_INTEGRATION.md](NOVA_INTEGRATION.md) for details.
+
+**Key Functions:**
+- `get_existing_filings_set()`: Get set of already downloaded filings by CIK
+- `check_filing_exists_in_aurora()`: Check if a specific filing exists
+- `filter_existing_filings()`: Filter out already downloaded filings from a list
 
 ## 📜 License
 
