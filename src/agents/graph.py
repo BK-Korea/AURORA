@@ -13,6 +13,7 @@ from .nodes import (
     AnswererNode,
     CitationValidatorNode,
 )
+from .team import AnalysisTeam
 from ..document.sec_downloader import SECDownloader
 from ..document.parser import DocumentParser
 from ..document.chunker import DocumentChunker
@@ -24,11 +25,17 @@ class AuroraAgent:
     """
     Main AURORA research agent using LangGraph.
 
+    Supports two analysis modes:
+    - **standard**: Single-agent RAG pipeline (fast, focused answers)
+    - **team**: Multi-agent team analysis with parallel specialist analysts
+      (Financial, Risk, Comparative) producing Goldman Sachs-grade reports
+
     Workflow:
-    1. Resolve company name → ticker/CIK
+    1. Resolve company name -> ticker/CIK
     2. Download SEC filings
     3. Parse and index documents
-    4. Answer questions with citations
+    4. Answer questions with citations (standard mode)
+       OR run team analysis pipeline (team mode)
     5. Validate citations
     """
 
@@ -121,6 +128,13 @@ class AuroraAgent:
             progress_callback=self.progress_callback
         )
         self.citation_validator = CitationValidatorNode(strict=False)
+
+        # Analysis Team (multi-agent)
+        self.analysis_team = AnalysisTeam(
+            llm=self.llm,
+            progress_callback=self.progress_callback,
+            max_workers=3,
+        )
 
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph workflow."""
@@ -217,72 +231,60 @@ class AuroraAgent:
         result = self.graph.invoke(initial_state)
         return result
 
-    def ask(self, question: str, confirm_company: bool = True) -> Dict[str, Any]:
+    def _resolve_question_context(self, question: str) -> Dict[str, Any]:
         """
-        Ask a question about the indexed documents.
+        Shared logic for resolving company and retrieving context from a question.
+        Used by both ask() and team_analyze().
 
-        Enhanced process:
-        1. Get indexed companies list
-        2. Use LLM to extract company name from question
-        3. Use LLM to verify company against indexed list (exact match)
-        4. Filter by verified company name
-        5. Generate answer
-
-        Args:
-            question: User's question
-            confirm_company: Whether to confirm company match with user (for CLI)
-
-        Returns:
-            State with answer and citations
+        Returns state dict with retrieved_chunks populated.
         """
         # Step 1: Get indexed companies list
         stats = self.vector_store.get_collection_stats()
         indexed_companies = stats.get("indexed_companies", [])
-        
+
         if not indexed_companies:
             return {
                 "current_answer": "",
                 "answer_score": 0,
                 "error": "인덱스된 문서가 없습니다. 먼저 'aurora research <회사명>'으로 문서를 다운로드해주세요."
             }
-        
+
         if self.progress_callback:
             self.progress_callback(f"분석 중: 인덱스된 회사 {len(indexed_companies)}개 발견")
-        
+
         # Step 2: Get indexed tickers mapping
         indexed_tickers = stats.get("indexed_tickers", {})
-        
+
         if self.progress_callback and indexed_tickers:
-            ticker_info = ", ".join([f"{name} ({ticker})" for name, ticker in list(indexed_tickers.items())[:3]])
+            ticker_info = ", ".join([
+                f"{name} ({ticker})" for name, ticker in list(indexed_tickers.items())[:3]
+            ])
             self.progress_callback(f"인덱스된 티커 정보: {ticker_info}")
-        
-        # Step 3: Unified query interpretation using LangChain (RAG-style)
-        # This handles ALL variations without matching tables:
-        # - Query correction: fixes typos, spacing (e.g., "팔 케 이" → "팔케이")
-        # - Interpretation: extracts and normalizes company, form type, date
+
+        # Step 3: Unified query interpretation
         if self.progress_callback:
-            self.progress_callback("질문 교정 및 해석 중: 오타/띄어쓰기 교정 → 회사명, Form Type, 날짜 정보 추출...")
-        
+            self.progress_callback(
+                "질문 교정 및 해석 중: 오타/띄어쓰기 교정 -> 회사명, Form Type, 날짜 정보 추출..."
+            )
+
         interpreted = self.retriever.interpret_query_unified(question)
-        
+
         if interpreted.get("interpretation_notes") and self.progress_callback:
             self.progress_callback(f"해석 결과: {interpreted['interpretation_notes']}")
-        
-        # Extract normalized values
+
         company_or_ticker = interpreted.get("company_name_or_ticker")
         extracted_form_type = interpreted.get("form_type")
         extracted_date = interpreted.get("date_filter")
-        
-        # Step 4: Verify company from interpreted query against indexed list
-        # Use fuzzy matching first (fast), then LLM only if needed
+
+        # Step 4: Verify company against indexed list
         verified_company_name = None
+        matched_company_info = None
+
         if company_or_ticker:
-            # First try fast fuzzy matching (no LLM call)
             from thefuzz import fuzz
             best_match = None
             best_score = 0
-            
-            # Check company name match
+
             for indexed_company in indexed_companies:
                 score = fuzz.partial_ratio(
                     company_or_ticker.lower(),
@@ -291,150 +293,122 @@ class AuroraAgent:
                 if score > best_score:
                     best_score = score
                     best_match = indexed_company
-            
-            # Check ticker match if available
+
+            # Check ticker match
             if indexed_tickers:
                 for indexed_company, ticker in indexed_tickers.items():
                     if ticker and company_or_ticker.upper() == ticker.upper():
                         verified_company_name = indexed_company
                         if self.progress_callback:
-                            self.progress_callback(f"✓ 티커로 회사 확인됨: {ticker} → {verified_company_name}")
+                            self.progress_callback(
+                                f"Ticker match: {ticker} -> {verified_company_name}"
+                            )
                         break
-            
-            # If ticker match didn't work and fuzzy match is good, use it
+
             if not verified_company_name and best_score >= 70:
                 verified_company_name = best_match
                 if self.progress_callback:
-                    self.progress_callback(f"✓ 회사 확인됨 (유사도 {best_score}%): {verified_company_name}")
-            
-            # Only use LLM verification if fuzzy matching failed (60-70% range)
+                    self.progress_callback(
+                        f"Company matched (similarity {best_score}%): {verified_company_name}"
+                    )
+
+            # LLM verification for low-confidence matches
             if not verified_company_name and best_score >= 60:
                 if self.progress_callback:
-                    self.progress_callback("회사명 유사도가 낮음 - LLM으로 정확한 매칭 시도 중...")
+                    self.progress_callback("Low similarity - using LLM for precise matching...")
                 verified_company_name = self.retriever.verify_company_with_indexed_list(
                     company_or_ticker,
                     indexed_companies,
                     indexed_tickers=indexed_tickers if indexed_tickers else None
                 )
-        
+
+        # Fallback fuzzy match
+        if not verified_company_name and company_or_ticker:
+            from thefuzz import fuzz
+            best_match = None
+            best_score = 0
+            for indexed_company in indexed_companies:
+                score = fuzz.partial_ratio(
+                    company_or_ticker.lower(),
+                    indexed_company.lower()
+                )
+                if score > best_score:
+                    best_score = score
+                    best_match = indexed_company
+            if best_score >= 60:
+                verified_company_name = best_match
+            else:
+                # Try ticker matching
+                if indexed_tickers:
+                    for indexed_company, ticker in indexed_tickers.items():
+                        if ticker and company_or_ticker.upper() == ticker.upper():
+                            verified_company_name = indexed_company
+                            break
+
+        # Resolve CompanyInfo from SEC database
         if verified_company_name:
-            # Company verified - use exact indexed company name
-            if self.progress_callback:
-                self.progress_callback(f"✓ 회사 확인됨: {verified_company_name} (인덱스에서 찾음)")
-            
-            # Try to get CompanyInfo from SEC database for additional metadata
-            matched_company_info = None
-            
-            # First, try to get ticker from indexed_tickers if available
             ticker_to_search = None
             if indexed_tickers and verified_company_name in indexed_tickers:
                 ticker_to_search = indexed_tickers[verified_company_name]
-                if self.progress_callback:
-                    self.progress_callback(f"✓ 티커 확인: {ticker_to_search}")
-            
-            # Search by ticker first (more precise), then by company name
+
             if ticker_to_search:
                 candidates = self.downloader.search_company(ticker_to_search, limit=1)
                 if candidates:
                     matched_company_info = candidates[0]
-                    if self.progress_callback:
-                        self.progress_callback(f"✓ 티커로 SEC DB 매칭: {ticker_to_search} → {matched_company_info.name}")
-            
-            # If ticker search didn't work, try company name
             if not matched_company_info:
                 candidates = self.downloader.search_company(verified_company_name, limit=1)
                 if candidates:
                     matched_company_info = candidates[0]
-                    if self.progress_callback:
-                        self.progress_callback(f"✓ 회사명으로 SEC DB 매칭: {verified_company_name}")
         else:
-            # No company verified - use fuzzy matching directly (faster, no LLM call)
-            # This avoids another LLM call for extraction
-            if company_or_ticker:
-                # Use the already extracted company from unified interpretation
-                from thefuzz import fuzz
-                best_match = None
-                best_score = 0
-                
-                for indexed_company in indexed_companies:
-                    score = fuzz.partial_ratio(
-                        company_or_ticker.lower(),
-                        indexed_company.lower()
-                    )
-                    if score > best_score:
-                        best_score = score
-                        best_match = indexed_company
-                
-                if best_score >= 60:
-                    # Found a potential match - use it
-                    verified_company_name = best_match
-                    if self.progress_callback:
-                        self.progress_callback(f"✓ 회사 확인됨 (유사도 {best_score}%): {verified_company_name}")
-                else:
-                    # Try ticker matching
-                    if indexed_tickers:
-                        for indexed_company, ticker in indexed_tickers.items():
-                            if ticker and company_or_ticker.upper() == ticker.upper():
-                                verified_company_name = indexed_company
-                                if self.progress_callback:
-                                    self.progress_callback(f"✓ 티커로 회사 확인됨: {ticker} → {verified_company_name}")
-                                break
-                
-                if verified_company_name:
-                    # Get CompanyInfo from SEC database
-                    matched_company_info = None
-                    ticker_to_search = None
-                    if indexed_tickers and verified_company_name in indexed_tickers:
-                        ticker_to_search = indexed_tickers[verified_company_name]
-                    
-                    if ticker_to_search:
-                        candidates = self.downloader.search_company(ticker_to_search, limit=1)
-                        if candidates:
-                            matched_company_info = candidates[0]
-                    elif not matched_company_info:
-                        candidates = self.downloader.search_company(verified_company_name, limit=1)
-                        if candidates:
-                            matched_company_info = candidates[0]
-            
-            # If still no match, check if question mentions a company at all (fallback)
-            if not verified_company_name:
-                if self.progress_callback:
-                    self.progress_callback("회사명이 명시되지 않음 - 모든 인덱스된 문서에서 검색")
-                # No company filter - search all indexed documents
-                matched_company_info = None
-            
-            # Original fallback code removed to avoid extra LLM call
-            # We now use fuzzy matching directly on the interpreted company_or_ticker
+            if self.progress_callback:
+                self.progress_callback("회사명이 명시되지 않음 - 모든 인덱스된 문서에서 검색")
 
-        # Step 5: Create state with verified company info and form type filter
+        # Step 5: Build state and run retriever
         state = create_initial_state()
         state["current_query"] = question
         state["documents_processed"] = True
-        
+
         if verified_company_name:
-            # Use exact indexed company name for filtering
             state["indexed_company_name"] = verified_company_name
-            
         if matched_company_info:
             state["company_info"] = matched_company_info
-        
-        # Store interpreted form type and date for filtering
+
         if extracted_form_type:
             state["filter_form_type"] = extracted_form_type
             if self.progress_callback:
-                self.progress_callback(f"✓ Form Type 필터 적용: {extracted_form_type}만 검색")
-        
+                self.progress_callback(f"Form Type filter: {extracted_form_type}")
         if extracted_date:
             state["filter_date"] = extracted_date
             if self.progress_callback:
-                self.progress_callback(f"✓ 날짜 필터 적용: {extracted_date} 이후")
+                self.progress_callback(f"Date filter: {extracted_date}+")
 
-        # Step 5: Run through Q&A nodes
+        # Run retriever
         retriever_result = self.retriever(state)
         state.update(retriever_result)
+
+        # Store resolved metadata for downstream use
+        state["_verified_company_name"] = verified_company_name
+        state["_matched_company_info"] = matched_company_info
+
+        return state
+
+    def ask(self, question: str, confirm_company: bool = True) -> Dict[str, Any]:
+        """
+        Ask a question about the indexed documents (standard single-agent mode).
+
+        Args:
+            question: User's question
+            confirm_company: Whether to confirm company match with user (for CLI)
+
+        Returns:
+            State with answer and citations
+        """
+        state = self._resolve_question_context(question)
+
         if state.get("error"):
             return state
 
+        # Run answerer + citation validator
         answerer_result = self.answerer(state)
         state.update(answerer_result)
         if state.get("error"):
@@ -442,6 +416,78 @@ class AuroraAgent:
 
         validator_result = self.citation_validator(state)
         state.update(validator_result)
+        return state
+
+    def team_analyze(self, question: str) -> Dict[str, Any]:
+        """
+        Run multi-agent team analysis (Goldman Sachs-grade).
+
+        Deploys 3 specialist analysts in parallel:
+        - Financial Analyst: Metrics extraction, ratio analysis, financial health scoring
+        - Risk Analyst: Risk identification, categorization, quantitative scoring
+        - Comparative Analyst: Cross-period trends, trajectory, management guidance
+
+        Results are synthesized by a Report Synthesizer (MD-level) into a
+        unified executive research report.
+
+        Args:
+            question: User's question
+
+        Returns:
+            Dict with team report, risk rating, key metrics, analysts used, etc.
+        """
+        if self.progress_callback:
+            self.progress_callback("=" * 50)
+            self.progress_callback("AURORA Team Analysis Mode")
+            self.progress_callback("Deploying: Financial, Risk, Comparative Analysts")
+            self.progress_callback("=" * 50)
+
+        state = self._resolve_question_context(question)
+
+        if state.get("error"):
+            return state
+
+        chunks = state.get("retrieved_chunks", [])
+        if not chunks:
+            return {
+                "team_report": "",
+                "error": "관련 문서를 찾을 수 없습니다.",
+            }
+
+        # Build metadata for analysts
+        company_name = "Unknown"
+        verified = state.get("_verified_company_name")
+        matched = state.get("_matched_company_info")
+        if matched:
+            company_name = matched.name
+        elif verified:
+            company_name = verified
+
+        metadata = {
+            "company_name": company_name,
+            "company_info": matched,
+            "total_chunks": len(chunks),
+        }
+
+        # Run parallel team analysis
+        team_result = self.analysis_team.run_analysis(
+            question=question,
+            chunks=chunks,
+            metadata=metadata,
+            max_context_tokens=16000,
+        )
+
+        # Map to state
+        state["analysis_mode"] = "team"
+        state["team_report"] = team_result.get("report", "")
+        state["current_answer"] = team_result.get("report", "")
+        state["risk_rating"] = team_result.get("risk_rating", "N/A")
+        state["risk_flags"] = team_result.get("risk_flags", [])
+        state["key_metrics"] = team_result.get("key_metrics", {})
+        state["analysis_confidence"] = team_result.get("confidence", 0.0)
+        state["analysts_used"] = team_result.get("analysts_used", [])
+        state["error"] = team_result.get("error")
+
         return state
 
     def get_stats(self) -> Dict[str, Any]:

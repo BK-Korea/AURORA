@@ -18,6 +18,7 @@ class AgentState:
     - Downloaded documents
     - Current query and retrieved context
     - Generated answers with citations
+    - Team analysis results (multi-agent)
     """
     # Company information
     company_query: str = ""
@@ -37,6 +38,15 @@ class AgentState:
     # Answer generation
     current_answer: str = ""
     citations_valid: bool = False
+
+    # Team analysis (multi-agent)
+    analysis_mode: str = "standard"  # "standard" or "team"
+    team_report: str = ""
+    risk_rating: str = ""
+    risk_flags: List[str] = field(default_factory=list)
+    key_metrics: Dict[str, Any] = field(default_factory=dict)
+    analysis_confidence: float = 0.0
+    analysts_used: List[str] = field(default_factory=list)
 
     # Conversation history
     messages: Annotated[List[BaseMessage], add_messages] = field(default_factory=list)
@@ -62,6 +72,13 @@ def create_initial_state() -> Dict[str, Any]:
         "retrieved_chunks": [],
         "current_answer": "",
         "citations_valid": False,
+        "analysis_mode": "standard",
+        "team_report": "",
+        "risk_rating": "",
+        "risk_flags": [],
+        "key_metrics": {},
+        "analysis_confidence": 0.0,
+        "analysts_used": [],
         "messages": [],
         "error": None,
         "session_active": True,
