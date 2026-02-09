@@ -115,9 +115,10 @@ def _display_team_result(result: dict):
 
     # Analyst display names
     analyst_names = {
-        "financial_analyst": "Financial",
-        "risk_analyst": "Risk",
-        "comparative_analyst": "Comparative",
+        "strategy_analyst": "Strategy (McKinsey)",
+        "financial_analyst": "Financial (GS)",
+        "risk_analyst": "Risk (GS)",
+        "comparative_analyst": "Comparative (GS)",
     }
     analysts_display = ", ".join(
         analyst_names.get(a, a) for a in analysts_used
@@ -149,20 +150,33 @@ def _display_team_result(result: dict):
 
     # Key metrics dashboard
     financial_health = key_metrics.get("financial_health_score")
+    strategy_score = key_metrics.get("strategy_score")
     agg_risk = key_metrics.get("aggregate_risk_score")
     trajectory = key_metrics.get("overall_trajectory")
     total_risks = key_metrics.get("total_risks_identified")
+    moat = key_metrics.get("moat_strength")
+    execution = key_metrics.get("execution_score")
 
-    if any([financial_health, agg_risk, trajectory, total_risks]):
+    has_metrics = any([financial_health, strategy_score, agg_risk, trajectory, total_risks])
+    if has_metrics:
         metrics_table = Table(
-            title="Key Indicators",
+            title="Strategic-Financial Dashboard",
             show_header=True,
             border_style="dim",
             padding=(0, 1),
         )
-        metrics_table.add_column("Indicator", style="cyan", min_width=20)
+        metrics_table.add_column("Indicator", style="cyan", min_width=22)
         metrics_table.add_column("Value", style="bold", min_width=15)
-        metrics_table.add_column("Status", min_width=10)
+        metrics_table.add_column("Status", min_width=12)
+
+        if strategy_score is not None:
+            ss = int(strategy_score) if isinstance(strategy_score, (int, float)) else 0
+            ss_status = (
+                "[green]Strong[/green]" if ss >= 7
+                else "[yellow]Moderate[/yellow]" if ss >= 5
+                else "[red]Weak[/red]"
+            )
+            metrics_table.add_row("Strategy (McKinsey)", f"{ss}/10", ss_status)
 
         if financial_health is not None:
             fh = int(financial_health) if isinstance(financial_health, (int, float)) else 0
@@ -171,7 +185,24 @@ def _display_team_result(result: dict):
                 else "[yellow]Fair[/yellow]" if fh >= 5
                 else "[red]Weak[/red]"
             )
-            metrics_table.add_row("Financial Health", f"{fh}/10", fh_status)
+            metrics_table.add_row("Financial Health (GS)", f"{fh}/10", fh_status)
+
+        if execution is not None:
+            ex = int(execution) if isinstance(execution, (int, float)) else 0
+            ex_status = (
+                "[green]Excellent[/green]" if ex >= 7
+                else "[yellow]Fair[/yellow]" if ex >= 5
+                else "[red]Poor[/red]"
+            )
+            metrics_table.add_row("Execution Score", f"{ex}/10", ex_status)
+
+        if moat:
+            moat_status = (
+                "[green]Strong[/green]" if moat == "Strong"
+                else "[yellow]Moderate[/yellow]" if moat == "Moderate"
+                else "[red]Weak[/red]"
+            )
+            metrics_table.add_row("Competitive Moat", str(moat), moat_status)
 
         if agg_risk is not None:
             ar = float(agg_risk) if isinstance(agg_risk, (int, float)) else 0
@@ -318,7 +349,7 @@ def research(
     console.print(Panel(
         "[bold]Ready for questions![/bold]\n\n"
         "Commands:\n"
-        "  [bold cyan]team <question>[/bold cyan] - Full team analysis (Financial + Risk + Comparative)\n"
+        "  [bold cyan]team <question>[/bold cyan] - Full team analysis (Strategy + Finance + Risk + Trend)\n"
         "  [bold cyan]<question>[/bold cyan]      - Quick single-agent answer\n"
         "  [bold cyan]quit[/bold cyan]             - Exit session",
         title="Q&A Mode",
@@ -327,7 +358,11 @@ def research(
 
     while True:
         console.print()
-        question = Prompt.ask("[bold cyan]?[/bold cyan] Your question")
+        try:
+            question = Prompt.ask("[bold cyan]?[/bold cyan] Your question")
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]Session ended.[/dim]\n")
+            break
 
         if question.lower() in ["quit", "exit", "q"]:
             console.print("\n[dim]Thank you for using AURORA. Goodbye![/dim]\n")
@@ -344,7 +379,15 @@ def research(
                 console.print("[yellow]Please provide a question after 'team'.[/yellow]")
                 continue
 
-            result = agent.team_analyze(question)
+            try:
+                result = agent.team_analyze(question)
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Analysis interrupted.[/yellow]")
+                continue
+            except Exception as e:
+                console.print(f"[red]Analysis failed: {e}[/red]")
+                console.print("[dim]Please try again or rephrase your question.[/dim]")
+                continue
 
             if result.get("error") and not (result.get("team_report") or result.get("current_answer")):
                 console.print(f"[yellow]Note: {result['error']}[/yellow]")
@@ -356,7 +399,15 @@ def research(
             _display_team_result(result)
         else:
             # Standard mode
-            result = agent.ask(question)
+            try:
+                result = agent.ask(question)
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Query interrupted.[/yellow]")
+                continue
+            except Exception as e:
+                console.print(f"[red]Query failed: {e}[/red]")
+                console.print("[dim]Please try again or rephrase your question.[/dim]")
+                continue
 
             if result.get("error"):
                 console.print(f"[yellow]Note: {result['error']}[/yellow]")

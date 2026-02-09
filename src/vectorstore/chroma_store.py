@@ -186,34 +186,67 @@ class ChromaStore:
         return retrieved
 
     def get_collection_stats(self) -> Dict[str, Any]:
-        """Get statistics about the collection."""
+        """Get statistics about the collection with pagination to avoid OOM."""
         count = self.collection.count()
-        
-        # Get unique company names and tickers
-        all_data = self.collection.get(include=["metadatas"])
+
         company_names = set()
-        company_tickers = {}  # company_name -> ticker mapping
+        company_tickers = {}
         filing_dates = []
-        if all_data.get("metadatas"):
-            for meta in all_data["metadatas"]:
-                if meta and "company_name" in meta:
-                    company_name = meta["company_name"]
-                    company_names.add(company_name)
-                    # Store ticker if available
+
+        if count == 0:
+            return {
+                "total_chunks": 0,
+                "collection_name": self.collection_name,
+                "persist_dir": str(self.persist_dir),
+                "indexed_companies": [],
+                "indexed_tickers": {},
+                "latest_filing_date": None,
+                "earliest_filing_date": None,
+            }
+
+        # Paginated metadata retrieval to prevent memory overflow
+        batch_size = 5000
+        offset = 0
+        while offset < count:
+            try:
+                batch = self.collection.get(
+                    include=["metadatas"],
+                    limit=batch_size,
+                    offset=offset,
+                )
+            except Exception:
+                break
+
+            metadatas = batch.get("metadatas", [])
+            if not metadatas:
+                break
+
+            for meta in metadatas:
+                if not meta:
+                    continue
+                if "company_name" in meta:
+                    cname = meta["company_name"]
+                    company_names.add(cname)
                     if "company_ticker" in meta and meta["company_ticker"]:
-                        if company_name not in company_tickers:
-                            company_tickers[company_name] = meta["company_ticker"]
-                if meta and "filing_date" in meta:
+                        if cname not in company_tickers:
+                            company_tickers[cname] = meta["company_ticker"]
+                if "filing_date" in meta:
                     filing_dates.append(meta["filing_date"])
+
+            offset += len(metadatas)
+
+            # Early exit: once we have all companies and dates, no need to scan more
+            if len(company_names) > 0 and offset >= min(count, 20000):
+                break
 
         return {
             "total_chunks": count,
             "collection_name": self.collection_name,
             "persist_dir": str(self.persist_dir),
             "indexed_companies": list(company_names),
-            "indexed_tickers": company_tickers,  # company_name -> ticker mapping
+            "indexed_tickers": company_tickers,
             "latest_filing_date": max(filing_dates) if filing_dates else None,
-            "earliest_filing_date": min(filing_dates) if filing_dates else None
+            "earliest_filing_date": min(filing_dates) if filing_dates else None,
         }
 
     def clear_collection(self) -> None:

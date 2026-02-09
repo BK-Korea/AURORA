@@ -742,8 +742,8 @@ SEC Form Type:"""
             error_msg = "관련 정보를 찾을 수 없습니다."
             if filter_company_name:
                 error_msg += f" '{filter_company_name}' 회사의 문서가 인덱스에 없을 수 있습니다."
-            if extracted_date:
-                error_msg += f" {extracted_date} 이후의 최신 문서가 없을 수 있습니다."
+            if filter_date:
+                error_msg += f" {filter_date} 이후의 최신 문서가 없을 수 있습니다."
             return {
                 "retrieved_chunks": [],
                 "error": error_msg + " 다른 질문을 시도해주세요."

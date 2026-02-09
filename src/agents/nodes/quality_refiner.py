@@ -87,12 +87,16 @@ IMPROVEMENTS:
 위 보고서를 평가하세요.""")
         ]
 
-        response = self.llm.invoke(messages)
-        evaluation = response.content
+        try:
+            response = self.llm.invoke(messages)
+            evaluation = response.content
+        except Exception as e:
+            logger.warning(f"Quality evaluation LLM call failed: {e}")
+            return 7, "Evaluation unavailable", []
 
         # Parse score
         score = self._parse_score(evaluation)
-        
+
         # Parse improvements
         improvements = self._parse_improvements(evaluation)
 
@@ -175,8 +179,12 @@ class AnswerRefiner:
 더 많은 수치, 더 많은 원문 인용, 더 깊은 분석을 포함하세요.""")
         ]
 
-        response = self.llm.invoke(messages)
-        return response.content
+        try:
+            response = self.llm.invoke(messages)
+            return response.content
+        except Exception as e:
+            logger.warning(f"Answer refinement LLM call failed: {e}")
+            return current_answer
 
 
 class IterativeAnswerer:
@@ -263,9 +271,13 @@ CEO에게 직접 보고할 **상세한 분석 보고서**를 작성합니다.
 구체적인 수치, 영어 원문 인용, 명확한 출처를 포함하세요.""")
         ]
 
-        response = self.llm.invoke(messages)
-        current_answer = response.content
-        
+        try:
+            response = self.llm.invoke(messages)
+            current_answer = response.content
+        except Exception as e:
+            logger.error(f"Initial answer generation failed: {e}")
+            return "LLM 호출 실패. 잠시 후 다시 시도해주세요.", 0, 0
+
         # Debug: Check initial answer
         logger.info(f"Initial answer length: {len(current_answer)} chars")
         if len(current_answer) < 100:

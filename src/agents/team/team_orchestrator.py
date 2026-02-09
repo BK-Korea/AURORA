@@ -8,6 +8,7 @@ from .base_analyst import BaseAnalyst, AnalysisResult
 from .financial_analyst import FinancialAnalyst
 from .risk_analyst import RiskAnalyst
 from .comparative_analyst import ComparativeAnalyst
+from .strategy_analyst import StrategyAnalyst
 from .report_synthesizer import ReportSynthesizer
 from ...vectorstore.chroma_store import RetrievedChunk
 
@@ -18,45 +19,46 @@ class AnalysisTeam:
     """
     Orchestrates a team of specialist analyst agents for comprehensive SEC analysis.
 
-    Architecture:
-    ┌─────────────────────────────────────────────────────┐
-    │                  Analysis Team                       │
-    │                                                     │
-    │   ┌──────────────┐  ┌──────────────┐  ┌──────────┐ │
-    │   │  Financial    │  │    Risk      │  │Comparat. │ │
-    │   │  Analyst      │  │   Analyst    │  │ Analyst  │ │
-    │   └──────┬───────┘  └──────┬───────┘  └────┬─────┘ │
-    │          │                 │                │       │
-    │          └────────┬────────┘────────────────┘       │
-    │                   │                                 │
-    │          ┌────────▼────────┐                        │
-    │          │    Report       │                        │
-    │          │  Synthesizer    │                        │
-    │          └─────────────────┘                        │
-    └─────────────────────────────────────────────────────┘
+    Architecture (GS + McKinsey Dual-Perspective):
+    ┌──────────────────────────────────────────────────────────────┐
+    │                     Analysis Team                            │
+    │                                                              │
+    │  ┌─────────────┐ ┌──────────┐ ┌──────────┐ ┌────────────┐  │
+    │  │  Strategy    │ │ Financial│ │   Risk   │ │ Comparative│  │
+    │  │  (McKinsey)  │ │   (GS)   │ │  (GS)   │ │   (GS)     │  │
+    │  └──────┬──────┘ └────┬─────┘ └────┬─────┘ └──────┬─────┘  │
+    │         │             │            │               │        │
+    │         └─────────┬───┘────────────┘───────────────┘        │
+    │                   │                                         │
+    │          ┌────────▼────────────┐                            │
+    │          │  Report Synthesizer │                            │
+    │          │  (Strategy+Finance) │                            │
+    │          └─────────────────────┘                            │
+    └──────────────────────────────────────────────────────────────┘
 
-    All analysts run in parallel on the same context, then the
-    synthesizer combines their outputs into a single executive report.
+    4 analysts run in parallel, then the synthesizer produces an
+    integrated strategy + finance executive report.
     """
 
     def __init__(
         self,
         llm: BaseChatModel,
         progress_callback: Optional[Callable[[str], None]] = None,
-        max_workers: int = 3,
+        max_workers: int = 4,
     ):
         self.llm = llm
         self.progress_callback = progress_callback
         self.max_workers = max_workers
 
-        # Initialize specialist analysts
+        # Initialize specialist analysts (4 agents)
         self.analysts: List[BaseAnalyst] = [
+            StrategyAnalyst(llm=llm, progress_callback=progress_callback),
             FinancialAnalyst(llm=llm, progress_callback=progress_callback),
             RiskAnalyst(llm=llm, progress_callback=progress_callback),
             ComparativeAnalyst(llm=llm, progress_callback=progress_callback),
         ]
 
-        # Report synthesizer
+        # Report synthesizer (GS + McKinsey integrated)
         self.synthesizer = ReportSynthesizer(
             llm=llm, progress_callback=progress_callback
         )

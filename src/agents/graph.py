@@ -129,11 +129,11 @@ class AuroraAgent:
         )
         self.citation_validator = CitationValidatorNode(strict=False)
 
-        # Analysis Team (multi-agent)
+        # Analysis Team (multi-agent: Strategy + Finance + Risk + Comparative)
         self.analysis_team = AnalysisTeam(
             llm=self.llm,
             progress_callback=self.progress_callback,
-            max_workers=3,
+            max_workers=4,
         )
 
     def _build_graph(self) -> StateGraph:
@@ -422,13 +422,13 @@ class AuroraAgent:
         """
         Run multi-agent team analysis (Goldman Sachs-grade).
 
-        Deploys 3 specialist analysts in parallel:
-        - Financial Analyst: Metrics extraction, ratio analysis, financial health scoring
-        - Risk Analyst: Risk identification, categorization, quantitative scoring
-        - Comparative Analyst: Cross-period trends, trajectory, management guidance
+        Deploys 4 specialist analysts in parallel:
+        - Strategy Analyst (McKinsey): Business model, competitive positioning, spending justification
+        - Financial Analyst (GS): Metrics, ratios, cost structure, financial sustainability
+        - Risk Analyst (GS): Risk identification, categorization, quantitative scoring
+        - Comparative Analyst (GS): Cross-period trends, trajectory, management guidance
 
-        Results are synthesized by a Report Synthesizer (MD-level) into a
-        unified executive research report.
+        Results are synthesized into an integrated Strategy + Finance executive report.
 
         Args:
             question: User's question
@@ -437,10 +437,10 @@ class AuroraAgent:
             Dict with team report, risk rating, key metrics, analysts used, etc.
         """
         if self.progress_callback:
-            self.progress_callback("=" * 50)
-            self.progress_callback("AURORA Team Analysis Mode")
-            self.progress_callback("Deploying: Financial, Risk, Comparative Analysts")
-            self.progress_callback("=" * 50)
+            self.progress_callback("=" * 60)
+            self.progress_callback("AURORA Team Analysis Mode (GS + McKinsey)")
+            self.progress_callback("Deploying: Strategy, Financial, Risk, Comparative Analysts")
+            self.progress_callback("=" * 60)
 
         state = self._resolve_question_context(question)
 

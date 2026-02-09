@@ -38,7 +38,7 @@ class CompanyResolverNode:
             choice = int(response.content.strip()) - 1
             if 0 <= choice < len(candidates):
                 return choice
-        except:
+        except (ValueError, IndexError, AttributeError):
             pass
         return 0
 
